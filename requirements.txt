@@ -4,3 +4,4 @@ python-dotenv
 requests
 google-genai
 gspread-formatting
+apify-client
