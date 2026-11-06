@@ -1,6 +1,7 @@
 import subprocess
 import time
 import os
+import sys
 
 # Lista de scripts na ordem exata de execução
 scripts = [
@@ -23,8 +24,8 @@ def rodar_pipeline():
         caminho_script = os.path.join(diretorio_scripts, script)
         
         try:
-            # Roda o script e espera ele terminar
-            subprocess.run(["python", caminho_script], check=True)
+            # Usa sys.executable para garantir o caminho correto do Python no GitHub Actions
+            subprocess.run([sys.executable, caminho_script], check=True)
         except subprocess.CalledProcessError as e:
             print(f"❌ Erro ao executar o script {script}. O pipeline foi pausado.")
             print(f"Detalhes do erro: {e}")
