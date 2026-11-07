@@ -55,7 +55,7 @@ def gerar_texto_curriculo(perfil, titulo_vaga, empresa, descricao_vaga):
         return None
 
 def main():
-    print("📄 Iniciando geração de currículos sob medida...")
+    print("📄 Iniciando geração de currículos sob medida (Filtro de Score >= 90)...")
     
     perfil = ler_perfil()
     
@@ -88,8 +88,8 @@ def main():
         descricao = linha[8]
         score = linha[9]
         
-        # Processa apenas vagas com score >= 70 e que ainda não foram geradas
-        if not score or int(score) < 70:
+        # Processa APENAS vagas com score >= 90 e que ainda não foram geradas
+        if not score or int(score) < 90:
             continue
             
         nome_arquivo = f"CV_{empresa.replace(' ', '_')}_{titulo.replace(' ', '_')}.md"
