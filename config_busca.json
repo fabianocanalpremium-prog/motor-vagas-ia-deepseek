@@ -1,0 +1,11 @@
+{
+  "localizacao_padrao": "Sao Paulo",
+  "termos_busca": [
+    "(\"Sales Operations\" OR \"Sales Ops\" OR \"Gerente de Operações\" OR \"Presales\" OR \"Pré-vendas\" OR \"Tech Sales\") AND (\"Segurança Eletrônica\" OR \"Telecom\" OR \"Tecnologia\") AND (\"BI\" OR \"KPI\" OR \"CRM\" OR \"Processos\")",
+    "(\"Gerente de Operações Comerciais\" OR \"Inside Sales Manager\" OR \"Gerente Comercial\")",
+    "(\"Senior Sales Manager\" OR \"Gerente de Vendas Sênior\" OR \"Business Development\" OR \"Gerente de Negócios\" OR \"Key Account\" OR \"Enterprise\") AND (\"Segurança Eletrônica\" OR \"Telecom\" OR \"Telecomunicações\" OR \"Tecnologia\" OR \"Infraestrutura\") AND (B2B OR \"C-Level\" OR \"Forecast\")",
+    "(\"Senior Sales Manager\" OR \"Gerente de Vendas\")",
+    "(\"Gerente de Pré-Vendas\" OR \"Presales Manager\")",
+    "(\"Business Development Manager\" OR \"Gerente de Desenvolvimento de Negócios\")"
+  ]
+}
