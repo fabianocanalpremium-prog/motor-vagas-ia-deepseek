@@ -57,20 +57,17 @@ def analisar_vaga_com_gemini(perfil, descricao_vaga, salario_vaga):
     {salario_vaga}
     """
 
-    max_tentativas = 3
-    for tentativa in range(max_tentativas):
-        try:
-            response = client.models.generate_content(model=MODEL_ID, contents=prompt)
-            texto_limpo = response.text.strip().replace("```json", "").replace("```", "").strip()
-            return json.loads(texto_limpo)
-        except Exception as e:
-            print(f"⚠️ Tentativa {tentativa + 1} falhou: {e}")
-            if tentativa < max_tentativas - 1:
-                print("⏳ Aguardando 10 segundos para tentar novamente...")
-                time.sleep(10)
-            else:
-                print("❌ Falha definitiva após 3 tentativas.")
-                return None
+    try:
+        response = client.models.generate_content(model=MODEL_ID, contents=prompt)
+        texto_limpo = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(texto_limpo)
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            print("\n🛑 LIMITE DIÁRIO DO GEMINI ATINGIDO!")
+            print("O Google bloqueou novas análises por hoje. O robô vai parar e continuar de onde parou amanhã.")
+            return "LIMITE_ATINGIDO"
+        print(f"⚠️ Erro na chamada da IA: {e}")
+        return None
 
 def main():
     print(f"🧠 Iniciando análise e tradução com Gemini ({MODEL_ID})...")
@@ -102,17 +99,18 @@ def main():
         salario = linha[5] if len(linha) > 5 else "Não informado"
         resultado = analisar_vaga_com_gemini(perfil, descricao, salario)
         
+        if resultado == "LIMITE_ATINGIDO":
+            break
+            
         if resultado:
             aba_bruta.update_cell(i, 9, resultado.get("descricao_ptbr"))
             aba_bruta.update_cell(i, 10, resultado.get("score"))
             aba_bruta.update_cell(i, 11, resultado.get("salario_compativel"))
             aba_bruta.update_cell(i, 12, ", ".join(resultado.get("palavras_chave_faltantes", [])))
-            
             print(f"   ✅ Score: {resultado.get('score')} | Salário: {resultado.get('salario_compativel')}")
-            
-            time.sleep(5) # Pausa maior para garantir que a API não bloqueie
+            time.sleep(5)
 
-    print("\n🎉 Análise concluída!")
+    print("\n🎉 Processo finalizado!")
 
 if __name__ == "__main__":
     main()
