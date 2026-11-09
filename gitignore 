@@ -1,2 +1,6 @@
-credentials.json
 .env
+credentials.json
+missfont.log
+output/
+*.pdf
+last_update.txt
