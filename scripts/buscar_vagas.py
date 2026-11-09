@@ -22,7 +22,6 @@ CRED_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "crede
 SPREADSHEET_ID = "1rssICgKVOgKfm2Fg8LIYurmz5h2ZVyxF1g79XryrGjk"
 
 def carregar_configuracoes():
-    """Lê o arquivo JSON com as buscas booleanas"""
     config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config_busca.json"))
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -36,6 +35,16 @@ def conectar_sheets():
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_ID)
 
+def obter_urls_existentes(aba):
+    """Lê a coluna H (URLs) da planilha para criar uma lista do que já foi salvo"""
+    try:
+        # Pega todos os dados da coluna H (índice 8 no gspread, que começa em 1)
+        dados = aba.col_values(8)
+        return set(dados) # Usa 'set' para busca super rápida
+    except Exception as e:
+        print(f"⚠️ Erro ao ler URLs existentes: {e}")
+        return set()
+
 def formatar_data_hoje():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -44,7 +53,7 @@ def buscar_adzuna(termo, localizacao):
     if not APP_ID or not APP_KEY: return vagas
     url = f"https://api.adzuna.com/v1/api/jobs/br/search/1"
     params = {
-        "app_id": APP_ID, "app_key": APP_KEY, "results_per_page": 5, 
+        "app_id": APP_ID, "app_key": APP_KEY, "results_per_page": 10, 
         "what": termo, "where": localizacao
     }
     try:
@@ -66,26 +75,16 @@ def buscar_adzuna(termo, localizacao):
 
 def buscar_linkedin(termo, localizacao):
     vagas = []
-    if not APIFY_TOKEN:
-        print("⚠️ APIFY_TOKEN não configurado. Pulando LinkedIn.")
-        return vagas
-
+    if not APIFY_TOKEN: return vagas
     client = ApifyClient(APIFY_TOKEN)
-    run_input = {
-        "keywords": termo,
-        "location": localizacao,
-        "maxItems": 5,
-        "datePosted": "7"
-    }
+    run_input = {"keywords": termo, "location": localizacao, "maxItems": 10, "datePosted": "7"}
     try:
         run = client.actor("harshmaur/linkedin-jobs-scraper").call(run_input=run_input)
         if run:
             dataset_id = run.default_dataset_id
             if dataset_id:
                 for item in client.dataset(dataset_id).iterate_items():
-                    # CORREÇÃO: Tenta pegar o link em vários campos possíveis que o Apify retorna
                     url_vaga = item.get("jobUrl") or item.get("url") or item.get("link") or ""
-                    
                     vagas.append({
                         "titulo": item.get("title", ""),
                         "empresa": item.get("companyName", "Não informada"),
@@ -100,11 +99,17 @@ def buscar_linkedin(termo, localizacao):
     return vagas
 
 def main():
-    print("🔍 Iniciando busca multi-fonte baseada em BUSCAS BOOLEANAS...")
+    print("🔍 Iniciando busca multi-fonte com ANTI-DUPLICAÇÃO...")
     
     config = carregar_configuracoes()
     localizacao = config.get("localizacao_padrao", "Sao Paulo")
     termos_busca = config.get("termos_busca", [])
+
+    # Conecta na planilha e pega as URLs que já existem lá
+    planilha = conectar_sheets()
+    aba_bruta = planilha.worksheet("Vagas_Bruta")
+    urls_ja_salvas = obter_urls_existentes(aba_bruta)
+    print(f"🗂️ O robô já conhece {len(urls_ja_salvas)} vagas antigas na planilha. Elas serão ignoradas.")
 
     todas_vagas = []
 
@@ -112,35 +117,43 @@ def main():
         print(f"\n[{i}/{len(termos_busca)}] Buscando: {termo[:50]}...")
 
         v_adzuna = buscar_adzuna(termo, localizacao)
-        print(f"  - Adzuna: {len(v_adzuna)} vagas.")
+        print(f"  - Adzuna: {len(v_adzuna)} vagas brutas.")
         todas_vagas.extend(v_adzuna)
 
         v_linkedin = buscar_linkedin(termo, localizacao)
-        print(f"  - LinkedIn: {len(v_linkedin)} vagas.")
+        print(f"  - LinkedIn: {len(v_linkedin)} vagas brutas.")
         todas_vagas.extend(v_linkedin)
 
-    # Deduplicação: agora ele só remove vagas se o link for vazio, mas mantém a vaga!
+    # Filtro 1: Remove duplicatas da mesma rodada
     vagas_unicas = {}
     for v in todas_vagas:
-        chave = v.get('url') or str(uuid.uuid4()) # Se não tiver link, gera um ID aleatório para não descartar
+        chave = v.get('url') or str(uuid.uuid4())
         vagas_unicas[chave] = v
         
-    vagas_finais = list(vagas_unicas.values())
+    # Filtro 2: Remove vagas que JÁ ESTÃO na planilha
+    vagas_novas = []
+    duplicadas_ignoradas = 0
+    
+    for v in vagas_unicas.values():
+        if v['url'] in urls_ja_salvas and v['url'] != "":
+            duplicadas_ignoradas += 1
+        else:
+            vagas_novas.append(v)
 
-    if not vagas_finais:
-        print("Nenhuma vaga encontrada hoje.")
+    if duplicadas_ignoradas > 0:
+        print(f"\n♻️ {duplicadas_ignoradas} vagas já estavam na planilha e foram ignoradas (Anti-Duplicação).")
+
+    if not vagas_novas:
+        print("\n✅ Nenhuma vaga inédita encontrada hoje. Tudo já estava na planilha.")
         return
 
-    print(f"\n✅ Total de {len(vagas_finais)} vagas únicas encontradas. Salvando na planilha...")
+    print(f"\n🎉 {len(vagas_novas)} NOVAS vagas encontradas. Salvando na planilha...")
 
     try:
-        planilha = conectar_sheets()
-        aba_bruta = planilha.worksheet("Vagas_Bruta")
-
         linhas_para_inserir = []
         data_hoje = formatar_data_hoje()
 
-        for v in vagas_finais:
+        for v in vagas_novas:
             linhas_para_inserir.append([
                 str(uuid.uuid4())[:8], data_hoje, v["titulo"], v["empresa"],
                 v["local"], v["salario"], v["fonte"], v["url"],
@@ -148,7 +161,7 @@ def main():
             ])
 
         aba_bruta.append_rows(linhas_para_inserir, value_input_option="USER_ENTERED")
-        print(f"🎉 {len(linhas_para_inserir)} vagas salvas com sucesso na aba 'Vagas_Bruta'!")
+        print(f"🚀 {len(linhas_para_inserir)} vagas inéditas salvas com sucesso na aba 'Vagas_Bruta'!")
 
     except Exception as e:
         print(f"❌ Erro ao salvar no Google Sheets: {e}")
