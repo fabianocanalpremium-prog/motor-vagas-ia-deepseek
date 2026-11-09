@@ -26,7 +26,7 @@ def rodar_pipeline():
         caminho_script = os.path.join(diretorio_scripts, script)
         
         try:
-            # Usa sys.executable para garantir o caminho correto do Python
+            # Usa sys.executable para garantir o caminho correto do Python no GitHub Actions
             subprocess.run([sys.executable, caminho_script], check=True)
         except subprocess.CalledProcessError as e:
             print(f"❌ Erro ao executar o script {script}.")
