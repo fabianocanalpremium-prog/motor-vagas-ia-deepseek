@@ -5,3 +5,4 @@ requests
 google-genai
 gspread-formatting
 apify-client
+openai
