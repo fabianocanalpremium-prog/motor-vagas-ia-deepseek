@@ -6,3 +6,6 @@ google-genai
 gspread-formatting
 apify-client
 openai
+python-telegram-bot
+fpdf2
+beautifulsoup4

@@ -1,0 +1,43 @@
+name: Consultor de Vagas Telegram (Webhook)
+
+on:
+  repository_dispatch:
+    types: [nova_vaga_telegram]
+  workflow_dispatch: # Permite rodar manualmente se precisar
+
+jobs:
+  consultar_telegram:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependências do Sistema (Pandoc e LaTeX)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-xetex
+
+      - name: Instalar dependências do Python
+        run: |
+          pip install -r requirements.txt
+
+      - name: Recriar arquivos de credenciais
+        run: |
+          cat << 'EOF' > credentials.json
+          ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          EOF
+          
+          cat << 'EOF' > .env
+          ${{ secrets.ENV_FILE }}
+          EOF
+
+      - name: Executar Consultor de Vagas (Via Webhook)
+        env:
+          # Passa o link da vaga recebido do Cloudflare para o Python
+          VAGA_URL: ${{ github.event.client_payload.url }}
+        run: python scripts/consultor_vagas.py
