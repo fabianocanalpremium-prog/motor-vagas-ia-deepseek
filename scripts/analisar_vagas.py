@@ -14,132 +14,123 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 CRED_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "credentials.json"))
 SPREADSHEET_ID = "1rssICgKVOgKfm2Fg8LIYurmz5h2ZVyxF1g79XryrGjk"
 
-# --- CONFIGURAÇÃO DOS CLIENTES DE IA ---
-# 1. Groq (Prioridade)
+# --- CONFIGURAÇÕES DE IA (FALLBACK) ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client_groq = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 GROQ_MODEL = "openai/gpt-oss-120b"
 
-# 2. Gemini (Fallback)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+client_openrouter = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+    default_headers={"HTTP-Referer": "https://github.com/fabianocanalpremium-prog/motor-vagas-ia-deepseek", "X-Title": "Motor de Vagas IA"}
+) if OPENROUTER_API_KEY else None
+OPENROUTER_MODEL = "meta-llama/llama-3-8b-instruct:free"
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client_gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 GEMINI_MODEL = "gemini-3.5-flash"
 
-# Status das APIs (True = disponível, False = esgotada)
-api_status = {"groq": True, "gemini": True}
+api_status = {"groq": True, "openrouter": True, "gemini": True}
 
 def ler_perfil():
     caminho_perfil = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "input", "fabiano_tavares", "profile_truth.md"))
     with open(caminho_perfil, "r", encoding="utf-8") as f:
-        return f.read()
+        return f.read()[:10000]
 
-def extrair_json(texto):
-    """Limpa a resposta da IA e tenta converter para JSON"""
-    texto_limpo = texto.strip().replace("```json", "").replace("```", "").strip()
-    try:
-        return json.loads(texto_limpo)
-    except json.JSONDecodeError:
-        # Se falhar, tenta achar o primeiro '{' e o último '}'
-        inicio = texto_limpo.find('{')
-        fim = texto_limpo.rfind('}')
-        if inicio != -1 and fim != -1:
-            try:
-                return json.loads(texto_limpo[inicio:fim+1])
-            except:
-                pass
-        return None
-
-def analisar_com_groq(perfil, descricao, salario):
+# --- FUNÇÕES DE IA COM RETRY ---
+def analisar_com_groq(prompt):
     if not client_groq: return "ERRO"
-    # Trunca para evitar o erro 413 da Groq
-    descricao = descricao[:4000]
-    perfil = perfil[:10000]
     
-    prompt = f"""
-    Analise a vaga e o perfil. Retorne APENAS um JSON válido:
-    {{"descricao_ptbr": "Tradução", "score": 0-100, "salario_compativel": "Sim/Não/Indefinido", "palavras_chave_faltantes": ["p1", "p2"]}}
-    
-    VAGA: {descricao}
-    SALÁRIO: {salario}
-    PERFIL: {perfil}
-    """
+    max_tentativas = 2
+    for tentativa in range(max_tentativas):
+        try:
+            print("      🟢 Tentando Groq...")
+            response = client_groq.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            erro_str = str(e).lower()
+            if "429" in erro_str or "rate limit" in erro_str:
+                if "per day" in erro_str or "tpd" in erro_str:
+                    print("      🔴 Cota DIÁRIA da Groq esgotada.")
+                    return "LIMITE_DIARIO"
+                else:
+                    print(f"      ⏳ Limite por minuto na Groq. Aguardando 60s (Tentativa {tentativa+1}/{max_tentativas})...")
+                    time.sleep(60)
+            elif "413" in erro_str:
+                print("      🔴 Texto muito grande para a Groq.")
+                return "LIMITE_DIARIO"
+            else:
+                print(f"      ⚠️ Erro na Groq: {e}")
+                return "ERRO"
+                
+    print("      🔴 Groq falhou após tentativas.")
+    return "LIMITE_DIARIO"
+
+def analisar_com_openrouter(prompt):
+    if not client_openrouter: return "ERRO"
     try:
-        response = client_groq.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": "Você é um assistente que retorna apenas JSON válido."},
-                {"role": "user", "content": prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1
+        print("      🟠 Tentando OpenRouter...")
+        response = client_openrouter.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
         )
-        return extrair_json(response.choices[0].message.content)
+        return response.choices[0].message.content
     except Exception as e:
         erro_str = str(e).lower()
-        if "429" in erro_str or "rate limit" in erro_str or "413" in erro_str:
-            return "LIMITE_ATINGIDO"
-        print(f"      ⚠️ Erro na Groq: {e}")
+        if "429" in erro_str or "rate limit" in erro_str:
+            print("      🔴 Cota do OpenRouter esgotada.")
+            return "LIMITE_DIARIO"
+        print(f"      ⚠️ Erro no OpenRouter: {e}")
         return "ERRO"
 
-def analisar_com_gemini(perfil, descricao, salario):
+def analisar_com_gemini(prompt):
     if not client_gemini: return "ERRO"
-    
-    prompt = f"""
-    Analise a vaga e o perfil. Retorne APENAS um JSON válido, sem formatação markdown:
-    {{"descricao_ptbr": "Tradução", "score": 0-100, "salario_compativel": "Sim/Não/Indefinido", "palavras_chave_faltantes": ["p1", "p2"]}}
-    
-    VAGA: {descricao[:5000]}
-    SALÁRIO: {salario}
-    PERFIL: {perfil[:15000]}
-    """
     try:
+        print("      🔵 Tentando Gemini...")
         response = client_gemini.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        return extrair_json(response.text)
+        return response.text
     except Exception as e:
         erro_str = str(e).lower()
-        if "429" in erro_str or "quota" in erro_str:
-            return "LIMITE_ATINGIDO"
+        if "429" in erro_str or "quota" in erro_str or "503" in erro_str:
+            print("      🔴 Cota/Sobrecarga do Gemini.")
+            return "LIMITE_DIARIO"
         print(f"      ⚠️ Erro no Gemini: {e}")
         return "ERRO"
 
-def analisar_vaga_inteligente(perfil, descricao, salario):
-    """O Maestro que decide qual IA usar"""
-    
-    # 1. Tenta Groq (se estiver disponível)
+def analisar_vaga_inteligente(prompt_completo):
+    # 1. Groq
     if api_status["groq"]:
-        print("      🟢 Tentando Groq...")
-        resultado = analisar_com_groq(perfil, descricao, salario)
-        
-        if resultado == "LIMITE_ATINGIDO":
-            print("      🔴 Cota da Groq esgotada. Alternando para o Gemini...")
-            api_status["groq"] = False
-        elif resultado and resultado != "ERRO":
-            return resultado
+        res = analisar_com_groq(prompt_completo)
+        if res == "LIMITE_DIARIO": api_status["groq"] = False
+        elif res and res != "ERRO": return res
 
-    # 2. Tenta Gemini (se Groq falhou ou já estava esgotado)
+    # 2. OpenRouter
+    if api_status["openrouter"]:
+        res = analisar_com_openrouter(prompt_completo)
+        if res == "LIMITE_DIARIO": api_status["openrouter"] = False
+        elif res and res != "ERRO": return res
+
+    # 3. Gemini
     if api_status["gemini"]:
-        print("      🔵 Tentando Gemini...")
-        resultado = analisar_com_gemini(perfil, descricao, salario)
-        
-        if resultado == "LIMITE_ATINGIDO":
-            print("      🔴 Cota do Gemini esgotada.")
-            api_status["gemini"] = False
-        elif resultado and resultado != "ERRO":
-            return resultado
+        res = analisar_com_gemini(prompt_completo)
+        if res == "LIMITE_DIARIO": api_status["gemini"] = False
+        elif res and res != "ERRO": return res
 
-    # Se ambos falharam
-    if not api_status["groq"] and not api_status["gemini"]:
+    # Se todas as APIs esgotaram
+    if not api_status["groq"] and not api_status["openrouter"] and not api_status["gemini"]:
         return "TUDO_ESGOTADO"
-        
     return None
 
+# --- FUNÇÃO PRINCIPAL ---
 def main():
-    print("🧠 Iniciando análise com Motor de Fallback (Groq -> Gemini)...")
+    print("🧠 Iniciando análise e tradução com Motor de Fallback (Groq -> OpenRouter -> Gemini)...")
     
-    if not api_status["groq"] and not api_status["gemini"]:
-        print("❌ Nenhuma chave de API configurada no .env.")
-        return
-
     perfil = ler_perfil()
     
     creds = Credentials.from_service_account_file(CRED_FILE, scopes=SCOPES)
@@ -152,6 +143,9 @@ def main():
         print("Nenhuma vaga para analisar.")
         return
 
+    vagas_pendentes = 0
+    vagas_analisadas = 0
+
     for i, linha in enumerate(dados[1:], start=2):
         if len(linha) < 9: continue
         
@@ -161,27 +155,54 @@ def main():
         if score_atual.strip():
             continue
             
+        vagas_pendentes += 1
         print(f"🔍 Analisando vaga {i}: {linha[2][:40]}...")
         
         salario = linha[5] if len(linha) > 5 else "Não informado"
-        resultado = analisar_vaga_inteligente(perfil, descricao, salario)
+        prompt_completo = f"""
+        Você é um recrutador especialista. Analise a vaga abaixo e compare com o perfil do candidato.
+        Retorne APENAS um JSON válido, sem formatação markdown (sem ```json), com a estrutura:
+        {{
+          "descricao_ptbr": "Texto da descrição traduzido para o português",
+          "score": (número inteiro de 0 a 100),
+          "salario_compativel": ("Sim" ou "Não" ou "Indefinido"),
+          "palavras_chave_faltantes": ["palavra1", "palavra2"]
+        }}
+        PERFIL: {perfil}
+        VAGA: {descricao[:4000]}
+        SALÁRIO: {salario}
+        """
         
-        if resultado == "TUDO_ESGOTADO":
-            print("\n🛑 TODAS AS COTAS DE IA ESGOTADAS!")
-            print("O robô vai parar e continuar de onde parou amanhã.")
+        analise = analisar_vaga_inteligente(prompt_completo)
+        
+        if analise == "TUDO_ESGOTADO":
+            print("\n🛑 TODAS AS COTAS DE IA ESGOTADAS! O robô vai parar e continuar amanhã.")
             break
             
-        if resultado:
+        if not analise:
+            print(f"   ⚠️ Erro ao analisar a vaga {i}. Pulando para a próxima.")
+            continue
+
+        try:
+            # Limpa possíveis blocos de código que a IA possa ter colocado
+            texto_limpo = analise.replace("```json", "").replace("```", "").strip()
+            resultado = json.loads(texto_limpo)
+            
             aba_bruta.update_cell(i, 9, resultado.get("descricao_ptbr", ""))
             aba_bruta.update_cell(i, 10, resultado.get("score", 0))
             aba_bruta.update_cell(i, 11, resultado.get("salario_compativel", "Indefinido"))
             aba_bruta.update_cell(i, 12, ", ".join(resultado.get("palavras_chave_faltantes", [])))
             
-            print(f"   ✅ Vaga {i} processada com sucesso!")
+            print(f"   ✅ Score: {resultado.get('score')} | Salário: {resultado.get('salario_compativel')}")
+            vagas_analisadas += 1
             
-            time.sleep(2) # Pequena pausa para não sobrecarregar
+            time.sleep(5) # Pausa para evitar bloqueios
+            
+        except json.JSONDecodeError:
+            print(f"   ⚠️ Erro ao decodificar o JSON da vaga {i}. A IA retornou um formato inválido.")
+            continue
 
-    print("\n🎉 Processo finalizado!")
+    print(f"\n🎉 Processo finalizado! {vagas_analisadas} vagas analisadas de {vagas_pendentes} pendentes.")
 
 if __name__ == "__main__":
     main()
